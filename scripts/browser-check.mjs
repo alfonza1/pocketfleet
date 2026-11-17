@@ -95,6 +95,9 @@ try {
   for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 1000 }]) {
     await page.setViewportSize(viewport);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Dashboard must not overflow horizontally');
+    if (process.argv.includes('--screenshots')) {
+      await page.screenshot({ path: `docs/screenshots/${viewport.width === 390 ? 'mobile' : 'desktop'}.png`, fullPage: true });
+    }
   }
 
   await requestFromUI(`/api/workers/${second.id}`, 'DELETE', () => page.locator(`[data-action="revoke"][data-id="${second.id}"]`).click());
