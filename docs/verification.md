@@ -1,12 +1,12 @@
 # Verification evidence
 
-Initial release verified on Windows 11, Node 24.18.1. CI additionally runs the core
+v0.2 verified on Windows 11, Node 24.18.1. CI additionally runs the core
 suite on Linux, macOS and Windows with Node 22 and 24; see the actual workflow results
 for those environments rather than inferring them from this local record.
 
 ## Core and protocol
 
-`npm test` runs 18 tests, including two independently authenticated HTTP workers
+`npm test` runs 32 tests, including two independently authenticated HTTP workers
 claiming distinct jobs, real gzip decompression, worker/admin separation, one-use and
 expired pairing, cancellation/late completion, revocation, lease and absolute deadlines,
 coordinator restart, single-writer lock, payload limits, secret-free summaries, state-size
@@ -15,7 +15,14 @@ The TLS test creates an ephemeral certificate, rejects it without trust, and com
 an authenticated worker job when that certificate is explicitly trusted. OpenSSL is
 required for this test (Git for Windows includes it).
 
-`npm run lint` and `npm run build` syntax-check native modules. This JavaScript project
+v0.2 adds restart-persistent submission deduplication, lost completion acknowledgements,
+bounded retries/backoff, malformed/oversized state preservation, safe backup failure,
+foreign-backup refusal, real CLI doctor/backup/restore, and independent worker rate budgets.
+A separately spawned CLI worker is also tested against a deliberately slow local model
+fixture: cancelling the job closes the request, and the same worker then completes another
+job. This is a protocol fixture, not another real-model benchmark.
+
+`npm run lint` runs ESLint recommended checks; `npm run build` syntax-checks native modules. This JavaScript project
 does not claim TypeScript checks. `npm pack --dry-run` reviews the distributable allowlist.
 The public release tarball was downloaded, SHA-256 matched against the local artifact,
 and installed into an empty prefix. The installed package served its dashboard and
@@ -38,6 +45,10 @@ its state afterward. It covers login, worker pairing, submit/completion, result 
 artifact download, cancellation, revocation and history clearing. Inspect desktop and
 mobile screenshots under `docs/screenshots/`; they show actual executions, not fabricated
 fleet metrics. Screenshots label the enrolled test workers as browser tests.
+Additional checks cover lost submission responses, duplicate clicks, UTF-8 byte limits,
+offline recovery, mutation authentication expiry, stale requests after logout, Escape/focus
+behavior, failed detail requests, and malicious-looking output displayed as text with JSON
+export. No accessibility conformance certification is claimed.
 
 ## Actual local-model execution
 

@@ -1,6 +1,6 @@
 # Security
 
-PocketFleet 0.1 is intended for trusted personal machines on loopback or a private
+PocketFleet 0.2 is intended for trusted personal machines on loopback or a private
 network. It is not a multi-tenant compute service and must not be publicly exposed.
 
 Use HTTPS for remote workers. HTTP opt-in is only for isolated trusted LANs. Never
@@ -12,6 +12,10 @@ outputs. Files request owner-only permissions on POSIX; on Windows, rely on the 
 profile's ACL and secure the chosen directory. Do not use a shared folder. Backups also
 contain sensitive data. If an admin token is exposed, stop the coordinator and replace
 the token in config.json with a fresh 64-character cryptographic hex secret, then restart.
+Backups omit plaintext credentials but include private payloads, results, token hashes
+and possibly in-flight lease metadata. A restore requires the original coordinator
+credential fingerprint, drops worker credentials/pairings, and never resumes pending work.
+Keep the original config.json separately protected if you need disaster recovery.
 
 Do not submit secrets in public issues. Use the repository's private vulnerability
 reporting feature when available; otherwise contact the maintainer through their GitHub

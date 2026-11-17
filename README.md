@@ -11,7 +11,7 @@ Agents can submit jobs through the CLI or HTTP API; people can use the dashboard
 
 ![PocketFleet dispatch dashboard](docs/screenshots/desktop.png)
 
-## What works in v0.1
+## What works in v0.2
 
 - Pair up to 32 workers with expiring, single-use codes and revocable credentials.
 - Dispatch UTF-8 text analysis, SHA-256 hashing, and gzip compression.
@@ -54,7 +54,7 @@ An existing worker reconnects without `--code` using the same `--dir` and `--ser
 Optional command installation:
 
 ```powershell
-npm install --global https://github.com/alfonza1/pocketfleet/releases/download/v0.1.0/alfonza1-pocketfleet-0.1.0.tgz
+npm install --global https://github.com/alfonza1/pocketfleet/releases/download/v0.2.0/alfonza1-pocketfleet-0.2.0.tgz
 pocketfleet --help
 ```
 
@@ -121,6 +121,38 @@ Limits live in [`src/config.mjs`](src/config.mjs): 128 KiB input, 512 KiB result
 500 retained jobs, 16 MiB total state, 32 active workers, 16 pending pairing codes. Clear terminal jobs
 to free history space. Values are intentionally small for a personal fleet.
 
+## Recovery and reliable clients
+
+Inspect local state without displaying credentials:
+
+```powershell
+node src/cli.mjs doctor
+```
+
+Back up a running coordinator to a new file, then restore only after stopping it:
+
+```powershell
+node src/cli.mjs backup --file .pocketfleet/snapshot.backup.json
+# Stop the coordinator before this command. Existing state is preserved separately.
+node src/cli.mjs restore --file .pocketfleet/snapshot.backup.json --replace
+```
+
+Keep `config.json` separately protected: restoring an archive requires its original
+coordinator credentials. Backups contain private job data. They never overwrite an
+existing archive. Restore removes old workers/pairing codes and fails historical queued
+or running jobs, so stale work cannot silently execute again. Re-pair workers and submit
+new jobs explicitly. See [operations](docs/operations.md) for recovery steps and limits.
+
+For a submission you may need to retry, choose a stable key for that logical request:
+
+```powershell
+node src/cli.mjs submit --kind text-stats --text "hello fleet" --idempotency-key report-001
+```
+
+Repeating the same request/key returns the original job while it remains in history.
+Changing the request requires a new key. Clearing history also clears its deduplication
+record. The dashboard handles keys automatically for unchanged retries after errors.
+
 ## Development
 
 ```powershell
@@ -131,8 +163,9 @@ npm run build
 npm run dev
 ```
 
-`lint` and `build` syntax-check the native JavaScript modules; no transpilation or
-TypeScript type-checking is claimed. The test suite exercises real HTTP dispatch,
+Development tools require Node 22.13+ or 24+. `lint` runs ESLint's recommended checks;
+`build` syntax-checks the native JavaScript modules. No transpilation or TypeScript
+type-checking is claimed. The test suite exercises real HTTP dispatch,
 authentication separation, lease expiry, cancellation, persistence, and real gzip
 artifacts. The Ollama protocol test uses a clearly labelled HTTP fixture server.
 

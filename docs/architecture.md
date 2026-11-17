@@ -21,7 +21,12 @@ A claim atomically assigns a worker, a fresh lease token, and an absolute deadli
 All mutations occur synchronously within the Node event loop and are persisted using
 write-to-temporary-file followed by rename. A process lock prevents two coordinators
 from sharing a directory. This is a single-host persistence strategy, not an HA database.
-Files are not fsynced; sudden power loss can lose the most recent write. Keep backups.
+New files are flushed with fsync before rename. POSIX also flushes the parent directory;
+Windows has no portable directory fsync through Node, so power-loss metadata durability
+still depends on the filesystem. Use a local disk and keep backups; this is not a database
+with a write-ahead log or a replicated durability guarantee. Random exclusive temporary
+files avoid collisions with stale temporary paths. Startup validates the entire bounded
+state schema before modifying anything; malformed data stays untouched.
 Idle polling and heartbeats update in-memory presence/leases without rewriting history.
 On disk-write failure the mutation is rolled back and dispatch stops until restart.
 Total serialized state is capped at 16 MiB. The dashboard polls summaries and fetches
@@ -31,6 +36,15 @@ Only the assigned worker with the current lease can heartbeat or complete a job.
 Cancelled, expired, or interrupted jobs reject late completion. Restarted coordinators
 fail jobs that were running rather than assuming they can safely replay them.
 There is no exactly-once execution promise across crashes or network partitions.
+Optional submission keys deduplicate a retained job, and hashed completion receipts allow
+an already committed result to be acknowledged after a lost response. Neither feature
+automatically retries the underlying work.
+
+The backup endpoint snapshots state synchronously. CLI backups are flushed into an exclusive
+temporary file and published without overwriting an existing archive. Restore acquires the
+same coordinator lock, validates credentials/schema, preserves the previous state, fails
+pending historical jobs, and removes all enrolled workers and pairing codes. This prevents
+replaying old work or resurrecting a credential revoked after the backup was taken.
 
 ## Trust boundaries
 

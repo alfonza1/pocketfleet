@@ -1,6 +1,6 @@
 {
   "name": "@alfonza1/pocketfleet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A private job fleet for the computers you already own.",
   "type": "module",
   "bin": {
@@ -19,7 +19,7 @@
     "dev": "node src/cli.mjs serve --init",
     "start": "node src/cli.mjs serve",
     "test": "node --test test/*.test.mjs",
-    "lint": "node scripts/check.mjs",
+    "lint": "eslint . --max-warnings 0",
     "build": "node scripts/check.mjs",
     "test:e2e": "node scripts/browser-check.mjs"
   },
@@ -36,6 +36,9 @@
     "job-queue"
   ],
   "devDependencies": {
-    "@playwright/test": "^1.65.1"
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0"
   }
 }

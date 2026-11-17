@@ -12,7 +12,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { FleetStore } from '../src/store.mjs';
 import { createCoordinator } from '../src/server.mjs';
 import { initialize, hash, LIMITS, atomicJson, matches } from '../src/config.mjs';
-import { api, enrollWorker, processOne, reportCompletion, runWorker } from '../src/worker.mjs';
+import { api, enrollWorker, reportCompletion, runWorker } from '../src/worker.mjs';
 import { inspectDirectory, restoreBackup, writeBackup } from '../src/maintenance.mjs';
 import { readFleetState } from '../src/state-file.mjs';
 
