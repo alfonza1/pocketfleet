@@ -252,3 +252,10 @@ test('a real CLI worker cancels a slow model request and continues processing jo
   await waitUntil(async () => (await api(server, `/api/jobs/${next.id}`, { token: adminToken, method: 'GET' })).status === 'completed');
   assert.equal((await api(server, `/api/jobs/${job.id}`, { token: adminToken, method: 'GET' })).status, 'cancelled');
 });
+
+test('invalid TLS configuration releases the state lock for a corrected restart', (t) => {
+  const { store, directory, adminToken } = fixture(t); store.close();
+  assert.throws(() => createCoordinator({ directory, adminToken, tls: { cert: 'invalid certificate', key: 'invalid key' } }));
+  assert.equal(existsSync(join(directory, 'coordinator.lock')), false);
+  const recovered = new FleetStore(directory, adminToken); recovered.close();
+});

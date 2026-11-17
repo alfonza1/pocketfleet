@@ -90,7 +90,9 @@ export function createCoordinator({ directory, adminToken, host = '127.0.0.1', t
     }
   };
   const options = { requestTimeout: 15_000, headersTimeout: 10_000, maxHeaderSize: 8192, keepAliveTimeout: 5000 };
-  const server = tls ? https.createServer({ ...options, ...tls }, handler) : http.createServer(options, handler);
+  let server;
+  try { server = tls ? https.createServer({ ...options, ...tls }, handler) : http.createServer(options, handler); }
+  catch (error) { store.close(); throw error; }
   const sweep = setInterval(() => {
     if (!store.persistenceFailed) { try { store.expire(); } catch { /* API reports unavailable until restart. */ } }
     const minute = Math.floor(Date.now() / 60_000);

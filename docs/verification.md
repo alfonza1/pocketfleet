@@ -6,7 +6,7 @@ for those environments rather than inferring them from this local record.
 
 ## Core and protocol
 
-`npm test` runs 32 tests, including two independently authenticated HTTP workers
+`npm test` runs 33 tests, including two independently authenticated HTTP workers
 claiming distinct jobs, real gzip decompression, worker/admin separation, one-use and
 expired pairing, cancellation/late completion, revocation, lease and absolute deadlines,
 coordinator restart, single-writer lock, payload limits, secret-free summaries, state-size

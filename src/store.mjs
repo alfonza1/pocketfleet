@@ -29,7 +29,8 @@ export class FleetStore {
       throw new Error('A coordinator already owns this state directory. If it crashed, confirm its PID in coordinator.lock has stopped, then remove that lock before restarting.');
     }
     const fd = openSync(this.lockPath, 'wx', 0o600);
-    writeFileSync(fd, String(process.pid)); closeSync(fd); this.locked = true;
+    try { writeFileSync(fd, String(process.pid)); this.locked = true; }
+    finally { closeSync(fd); if (!this.locked) unlinkSync(this.lockPath); }
   }
   close() { if (this.locked) { unlinkSync(this.lockPath); this.locked = false; } }
   timestamp() { return new Date(this.now()).toISOString(); }
