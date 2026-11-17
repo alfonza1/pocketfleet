@@ -18,6 +18,8 @@ try {
   const server = `http://127.0.0.1:${address.port}`;
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  // Explicitly allowed HTTP LAN origins do not expose randomUUID.
+  await page.addInitScript(() => Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }));
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('dialog', (dialog) => dialog.accept());
