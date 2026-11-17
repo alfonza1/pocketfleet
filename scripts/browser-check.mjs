@@ -51,13 +51,28 @@ try {
 
   await page.goto(server);
   await expect(page.locator('#login-panel')).toBeVisible();
+  await expect(page.locator('.setup-help')).toContainText('node src/cli.mjs token');
+  await expect(page.locator('.demo-help')).toContainText('pocketfleet demo');
+  if (process.argv.includes('--screenshots')) await page.screenshot({ path: 'docs/screenshots/login.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  if (process.argv.includes('--screenshots')) await page.screenshot({ path: 'docs/screenshots/login-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await login('invalid-test-token');
   await expect(page.locator('#notice')).toContainText('not accepted');
   await expect(page.locator('#login-panel')).toBeVisible();
   await login(adminToken);
   await expect(page.locator('#connection-label')).toHaveText('Fleet connected');
-  await expect(page.locator('#jobs')).toContainText('Nothing in the queue');
+  await expect(page.locator('#jobs')).toContainText('Run your first job');
   await expect(page.locator('#clear-history')).toBeDisabled();
+  await expect(page.locator('#workers')).toContainText('second terminal');
+  if (process.argv.includes('--screenshots')) await page.screenshot({ path: 'docs/screenshots/desktop-empty.png', fullPage: true });
+  await page.getByRole('button', { name: 'Prepare a gzip job' }).click();
+  await expect(page.locator('#kind')).toHaveValue('gzip');
+  await expect(page.locator('#payload')).toHaveValue(/returns a real gzip file/);
+  await expect(page.locator('#payload')).toBeFocused();
+  assert.equal((await state()).jobs.length, 0, 'Preparing an example must not dispatch work');
+  await page.locator('#kind').selectOption('text-stats');
 
   await page.locator('#payload').fill('🌍'.repeat(40000));
   await expect(page.locator('#payload')).toHaveAttribute('aria-invalid', 'true');

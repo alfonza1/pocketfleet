@@ -5,6 +5,7 @@ const POLL_INTERVAL_MS = 3000;
 const REQUEST_TIMEOUT_MS = 10000;
 const MAX_TEXT_BYTES = 128 * 1024;
 const PREVIEW_CHARACTERS = 30000;
+const FIRST_JOB_TEXT = 'PocketFleet sends this text to a worker.\nThe worker returns a real gzip file.\nDownload it, decompress it, and compare this text.';
 const labels = { 'text-stats': 'Text analysis', sha256: 'SHA-256 hash', gzip: 'Gzip compression', ollama: 'Local model' };
 const descriptions = {
   'text-stats': 'Count words, characters, and lines on an available worker.',
@@ -147,9 +148,9 @@ async function refresh() {
   }
 }
 
-function emptyState(title, description, icon = '▦') {
+function emptyState(title, description) {
   const element = node('div', 'empty');
-  element.append(node('span', 'empty-icon', icon), node('strong', '', title), node('span', '', description));
+  element.append(node('strong', '', title), node('span', '', description));
   return element;
 }
 
@@ -178,7 +179,11 @@ function renderWorkers() {
   preserveFocus(container, () => {
     container.replaceChildren();
     if (!fleet.workers.length) {
-      container.append(emptyState('Your first worker is one pairing away.', 'Pair a computer to process jobs. You can also run a worker on this machine.'));
+      const onboarding = emptyState('Start a worker on this computer', 'No extra hardware needed. Keep the coordinator running, then:');
+      const steps = node('ol', 'setup-steps');
+      for (const text of ['Choose Pair worker to generate a one-use command.', 'Run that command in a second terminal, from your PocketFleet checkout.', 'Leave the worker running. It will appear here when connected.']) steps.append(node('li', '', text));
+      onboarding.append(steps);
+      container.append(onboarding);
       return;
     }
     for (const worker of fleet.workers) {
@@ -210,7 +215,9 @@ function renderJobs() {
   preserveFocus($('jobs'), () => {
     $('jobs').replaceChildren();
     if (!jobs.length) {
-      $('jobs').append(emptyState(filter === 'all' ? 'Nothing in the queue. Yet.' : 'No matching jobs.', filter === 'all' ? 'Send a small text job to see your fleet in action.' : 'Try a different filter or send a new job.', '↗'));
+      const onboarding = emptyState(filter === 'all' ? 'Run your first job' : 'No matching jobs.', filter === 'all' ? 'Compress sample text on a worker, then inspect the completed job and download its .gz file.' : 'Choose All jobs to see the rest of your history.');
+      if (filter === 'all') onboarding.append(actionButton('Prepare a gzip job', 'prepare', 'first-job', 'secondary'));
+      $('jobs').append(onboarding);
       return;
     }
     for (const job of jobs) {
@@ -382,6 +389,17 @@ $('workers').addEventListener('click', async (event) => {
 $('jobs').addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
+  if (button.dataset.action === 'prepare') {
+    if ($('payload').value && !window.confirm('Replace the text currently in the job form with the gzip example?')) return;
+    $('kind').value = 'gzip';
+    $('kind').dispatchEvent(new Event('change'));
+    $('payload').value = FIRST_JOB_TEXT;
+    $('payload').dispatchEvent(new Event('input'));
+    $('payload').scrollIntoView({ block: 'center' });
+    $('payload').focus({ preventScroll: true });
+    announce('Example ready. Choose Queue job, then Inspect when it completes. A worker must be connected to process it.');
+    return;
+  }
   if (button.dataset.action === 'inspect') { inspectJob(button.dataset.id); return; }
   if (button.dataset.action !== 'cancel') return;
   button.disabled = true;
