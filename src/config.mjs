@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 export const LIMITS = Object.freeze({
   textBytes: 128 * 1024, bodyBytes: 1024 * 1024, resultBytes: 512 * 1024,
-  maxJobs: 500, maxWorkers: 32, maxPairings: 16,
+  maxJobs: 500, maxWorkers: 32, maxPairings: 16, stateBytes: 16 * 1024 * 1024,
   pairingMs: 5 * 60_000, heartbeatMs: 3_000, leaseMs: 20_000,
   jobTimeoutMs: 120_000, offlineMs: 15_000, pollMs: 1_000,
 });

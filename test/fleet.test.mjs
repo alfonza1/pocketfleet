@@ -9,7 +9,7 @@ import { FleetStore } from '../src/store.mjs';
 import { createCoordinator } from '../src/server.mjs';
 import { executeJob } from '../src/adapters.mjs';
 import { api, enrollWorker, processOne } from '../src/worker.mjs';
-import { initialize, LIMITS, validateJob, validateServer } from '../src/config.mjs';
+import { initialize, LIMITS, validateJob, validateServer, atomicJson } from '../src/config.mjs';
 
 function fixture(t, options) {
   const directory = mkdtempSync(join(tmpdir(), 'pocketfleet-'));
@@ -135,6 +135,40 @@ test('two real HTTP workers execute jobs with role separation and cross-origin p
   const state = await api(server, '/api/state', { token: adminToken, method: 'GET' });
   assert.ok(state.jobs.every((job) => job.status === 'completed'));
   assert.equal(new Set(state.jobs.map((job) => job.workerId)).size, 2);
-  assert.equal(gunzipSync(Buffer.from(state.jobs[1].result.data, 'base64')).toString(), 'distributed work');
+  const detail = await api(server, `/api/jobs/${state.jobs[1].id}`, { token: adminToken, method: 'GET' });
+  assert.equal(gunzipSync(Buffer.from(detail.result.data, 'base64')).toString(), 'distributed work');
+  assert.equal(state.jobs[1].result, undefined);
   const cleared = await api(server, '/api/jobs/completed', { token: adminToken, method: 'DELETE' }); assert.equal(cleared.deleted, 2);
+});
+test('idle claims and heartbeats never rewrite retained history', (t) => {
+  let writes = 0;
+  const { store } = fixture(t, { persist: (...args) => { writes++; atomicJson(...args); } });
+  const w = worker(store); const beforeIdle = writes;
+  store.claim(w.record); store.claim(w.record); assert.equal(writes, beforeIdle);
+  store.submit({ kind: 'text-stats', payload: { text: 'hello' } });
+  const { job } = store.claim(w.record); const beforePulse = writes;
+  store.heartbeat(w.record, job); store.claim(w.record); assert.equal(writes, beforePulse);
+});
+test('failed durable save rolls back rejected work and stops all future dispatch', (t) => {
+  let failed = false;
+  const { store } = fixture(t, { persist: (...args) => { if (failed) throw new Error('disk full'); atomicJson(...args); } });
+  const w = worker(store); failed = true;
+  assert.throws(() => store.submit({ kind: 'text-stats', payload: { text: 'must not execute' } }), /Dispatch is stopped/);
+  assert.equal(store.data.jobs.length, 0);
+  assert.throws(() => store.claim(w.record), /Dispatch is stopped/);
+  assert.throws(() => store.snapshot(), /Dispatch is stopped/);
+});
+test('empty or ambiguous completions cannot masquerade as success', (t) => {
+  const { store } = fixture(t); const w = worker(store);
+  store.submit({ kind: 'text-stats', payload: { text: '' } }); const { job } = store.claim(w.record);
+  assert.throws(() => store.complete(w.record, { ...job, error: '' }), /nonempty/);
+  assert.throws(() => store.complete(w.record, { ...job, result: {}, error: 'both' }), /exactly one/);
+  assert.equal(store.detail(job.id).status, 'running');
+});
+test('total state cap rejects excess output without losing last durable job state', (t) => {
+  const { store } = fixture(t);
+  const saved = store.data;
+  store.data = { ...saved, junk: 'x'.repeat(LIMITS.stateBytes) };
+  assert.throws(() => store.save(), /16 MiB/);
+  assert.equal(store.data.junk, undefined); assert.equal(store.persistenceFailed, false);
 });

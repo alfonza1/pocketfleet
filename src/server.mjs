@@ -46,12 +46,13 @@ export function createCoordinator({ directory, adminToken, host = '127.0.0.1', t
       const rate = rates.get(address);
       if (!rate || rate.minute !== minute) rates.set(address, { minute, count: 1 });
       else requireValue(++rate.count <= 600, 'Request limit reached. Try again in one minute.', 429);
-      if (request.method === 'GET' && url.pathname === '/health') return json(response, 200, { ok: true, version: '0.1.0' });
+      if (request.method === 'GET' && url.pathname === '/health') return json(response, store.persistenceFailed ? 503 : 200, { ok: !store.persistenceFailed, version: '0.1.0' });
       if (request.method === 'GET' && ASSETS[url.pathname]) {
         const [name, contentType] = ASSETS[url.pathname];
         response.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': `${contentType}; charset=utf-8` });
         response.end(readFileSync(join(publicDirectory, name))); return;
       }
+      store.assertHealthy();
       if (request.method === 'POST' && url.pathname === '/api/enroll') return json(response, 201, store.enroll(await readBody(request)));
       const token = request.headers.authorization?.match(/^Bearer ([^ ]+)$/)?.[1];
       const workerPath = url.pathname.startsWith('/api/worker/');
@@ -64,6 +65,8 @@ export function createCoordinator({ directory, adminToken, host = '127.0.0.1', t
       } else {
         requireValue(store.admin(token), 'Admin authentication required.', 401);
         if (request.method === 'GET' && url.pathname === '/api/state') return json(response, 200, store.snapshot());
+        const detail = url.pathname.match(/^\/api\/jobs\/([\w-]+)$/);
+        if (request.method === 'GET' && detail) return json(response, 200, store.detail(detail[1]));
         if (request.method === 'POST' && url.pathname === '/api/pairing') return json(response, 201, store.pairing());
         if (request.method === 'POST' && url.pathname === '/api/jobs') return json(response, 201, store.submit(await readBody(request)));
         if (request.method === 'DELETE' && url.pathname === '/api/jobs/completed') return json(response, 200, store.clearCompleted());
@@ -80,7 +83,7 @@ export function createCoordinator({ directory, adminToken, host = '127.0.0.1', t
   const options = { requestTimeout: 15_000, headersTimeout: 10_000, maxHeaderSize: 8192, keepAliveTimeout: 5000 };
   const server = tls ? https.createServer({ ...options, ...tls }, handler) : http.createServer(options, handler);
   const sweep = setInterval(() => {
-    store.expire();
+    if (!store.persistenceFailed) { try { store.expire(); } catch { /* API reports unavailable until restart. */ } }
     const minute = Math.floor(Date.now() / 60_000);
     for (const [ip, rate] of rates) if (rate.minute !== minute) rates.delete(ip);
   }, 5000);

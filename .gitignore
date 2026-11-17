@@ -5,7 +5,7 @@ node_modules/
 *.pem
 *.key
 .env*
-!\.env.example
+!.env.example
 test-results/
 playwright-report/
 coverage/
