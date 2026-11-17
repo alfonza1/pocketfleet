@@ -57,19 +57,73 @@ try {
   await expect(page.locator('#jobs')).toContainText('Nothing in the queue');
   await expect(page.locator('#clear-history')).toBeDisabled();
 
+  await page.locator('#payload').fill('🌍'.repeat(40000));
+  await expect(page.locator('#payload')).toHaveAttribute('aria-invalid', 'true');
+  assert.equal(await page.locator('#payload').evaluate((input) => input.checkValidity()), false);
+  await page.locator('#payload').fill('Valid text');
+  await expect(page.locator('#payload')).toHaveAttribute('aria-invalid', 'false');
+
   const first = await enroll('Desktop · browser check');
   const second = await enroll('Laptop · browser check');
   await page.locator('#close-pair').click();
   await expect(page.locator('#workers .worker')).toHaveCount(2, { timeout: 10000 });
 
-  const textJob = await submit('text-stats', 'Hello hello\nworld');
+  // Simulate a response lost after the coordinator durably accepts the job.
+  const submissionKeys = [];
+  await page.route('**/api/jobs', async (route) => {
+    submissionKeys.push(route.request().headers()['idempotency-key']);
+    if (submissionKeys.length === 1) { await route.fetch(); await route.abort(); }
+    else await route.continue();
+  });
+  await page.locator('#payload').fill('Hello hello\nworld');
+  await page.locator('#job-form').evaluate((form) => {
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+  await expect(page.locator('#notice')).toContainText('Cannot reach');
+  assert.equal(submissionKeys.length, 1, 'Concurrent submits must issue only one request');
+  const textJob = await requestFromUI('/api/jobs', 'POST', () => page.locator('#submit-job').click());
+  await page.unroute('**/api/jobs');
+  assert.ok(submissionKeys[0] && submissionKeys[0] === submissionKeys[1], 'Retry must reuse its submission key');
+  assert.equal((await state()).jobs.length, 1, 'Lost-response retry must not create another job');
   assert.equal(await processOne({ server, token: first.token }), true);
   await expect(row(textJob.id).locator('.status')).toHaveText('completed', { timeout: 10000 });
   await row(textJob.id).getByRole('button', { name: 'Inspect' }).click();
   await expect(page.locator('#result-output')).toContainText('"words"');
   const stats = JSON.parse(await page.locator('#result-output').textContent());
   assert.equal(stats.words, 3);
-  await page.locator('#close-result').click();
+  // Polling replaces job rows while a dialog is open; Escape must focus the new trigger.
+  await page.waitForResponse((response) => new URL(response.url()).pathname === '/api/state');
+  await page.keyboard.press('Escape');
+  await expect(row(textJob.id).getByRole('button', { name: 'Inspect' })).toBeFocused();
+
+  await page.route(`**/api/jobs/${textJob.id}`, (route) => route.abort());
+  await row(textJob.id).getByRole('button', { name: 'Inspect' }).click();
+  await expect(page.locator('#result-error')).toContainText('Cannot reach');
+  await expect(page.locator('#download-result')).toBeHidden();
+  await page.keyboard.press('Escape');
+  await page.unroute(`**/api/jobs/${textJob.id}`);
+
+  const untrustedOutput = `<img src=x onerror="alert('unsafe')">${'long worker output '.repeat(2200)}`;
+  await page.route(`**/api/jobs/${textJob.id}`, async (route) => {
+    const response = await route.fetch();
+    const detail = await response.json();
+    await route.fulfill({ response, json: { ...detail, result: { message: untrustedOutput } } });
+  });
+  await row(textJob.id).getByRole('button', { name: 'Inspect' }).click();
+  await expect(page.locator('#result-output')).toContainText('Preview truncated');
+  await expect(page.locator('#result-output img')).toHaveCount(0);
+  const jsonDownloadPromise = page.waitForEvent('download');
+  await page.locator('#download-result').click();
+  const jsonDownload = await jsonDownloadPromise;
+  assert.equal(JSON.parse(await readFile(await jsonDownload.path(), 'utf8')).message, untrustedOutput);
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    if (process.argv.includes('--screenshots')) await page.screenshot({ path: `docs/screenshots/result-${width}.png` });
+  }
+  await page.keyboard.press('Escape');
+  await page.unroute(`**/api/jobs/${textJob.id}`);
 
   const original = 'PocketFleet browser download check. 🌍';
   const gzipJob = await submit('gzip', original);
@@ -106,11 +160,45 @@ try {
   await requestFromUI('/api/jobs/completed', 'DELETE', () => page.locator('#clear-history').click());
   await expect(page.locator('#jobs .job')).toHaveCount(0);
   await expect(page.locator('#clear-history')).toBeDisabled();
-  await page.locator('#logout').click();
+
+  await page.context().setOffline(true);
+  await expect(page.locator('#connection-label')).toHaveText('Connection interrupted', { timeout: 10000 });
+  await page.context().setOffline(false);
+  await expect(page.locator('#connection-label')).toHaveText('Fleet connected', { timeout: 10000 });
+  await expect(page.locator('#notice')).toContainText('Connection restored');
+
+  // A mutation's 401 must immediately end the session, without waiting for a poll.
+  await page.route('**/api/pairing', (route) => route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"Admin authentication required."}' }));
+  await page.locator('#pair').click();
   await expect(page.locator('#login-panel')).toBeVisible();
+  await expect(page.locator('#notice')).toContainText('not accepted');
+  await page.unroute('**/api/pairing');
+  await login(adminToken);
+  await expect(page.locator('#connection-label')).toHaveText('Fleet connected');
+  const pairingAccepted = Promise.withResolvers();
+  const releasePairing = Promise.withResolvers();
+  const pairingFinished = Promise.withResolvers();
+  await page.route('**/api/pairing', async (route) => {
+    const response = await route.fetch();
+    pairingAccepted.resolve();
+    await releasePairing.promise;
+    await route.fulfill({ response });
+    pairingFinished.resolve();
+  });
+  await page.locator('#pair').click();
+  await pairingAccepted.promise;
+  const abortedPairing = page.waitForEvent('requestfailed', (request) => new URL(request.url()).pathname === '/api/pairing');
+  await page.locator('#logout').click();
+  await abortedPairing;
+  releasePairing.resolve();
+  await pairingFinished.promise;
+  await page.unroute('**/api/pairing');
+  await expect(page.locator('#login-panel')).toBeVisible();
+  await expect(page.locator('#pair-command')).toHaveText('');
+  await expect(page.locator('#notice')).toContainText('Disconnected');
   assert.equal(await page.evaluate(() => sessionStorage.getItem('pocketfleet-token')), null);
   assert.deepEqual(errors, []);
-  console.log('Browser check passed: auth, two real workers, text analysis, gzip download, queued cancellation, filters, revocation, clear history, logout, desktop and mobile.');
+  console.log('Browser check passed: auth, UTF-8 limits, duplicate/lost-response submission, two real workers, text analysis, gzip/JSON downloads, untrusted long output, dialog keyboard focus/error recovery, cancellation, filters, revocation, clear history, offline recovery, mutation auth expiry, pending-request logout, desktop and mobile.');
 } finally {
   await browser?.close();
   await coordinator?.close();

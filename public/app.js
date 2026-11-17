@@ -3,6 +3,8 @@
 const $ = (id) => document.getElementById(id);
 const POLL_INTERVAL_MS = 3000;
 const REQUEST_TIMEOUT_MS = 10000;
+const MAX_TEXT_BYTES = 128 * 1024;
+const PREVIEW_CHARACTERS = 30000;
 const labels = { 'text-stats': 'Text analysis', sha256: 'SHA-256 hash', gzip: 'Gzip compression', ollama: 'Local model' };
 const descriptions = {
   'text-stats': 'Count words, characters, and lines on an available worker.',
@@ -18,6 +20,10 @@ let selectedJob = null;
 let generation = 0;
 let connectionInterrupted = false;
 let detailSequence = 0;
+let inspectedJobId = null;
+let submitting = false;
+let submissionIntent = null;
+let sessionController = new AbortController();
 try { token = sessionStorage.getItem('pocketfleet-token') || ''; } catch { /* A private browser can disable storage. */ }
 
 function node(tag, className, text) {
@@ -39,18 +45,43 @@ function connection(label, connected = false) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const requestGeneration = generation;
+  let response;
+  try { response = await fetch(path, {
     ...options,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...options.headers },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const body = await response.json().catch(() => ({}));
+    signal: AbortSignal.any([sessionController.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+  }); } catch (error) {
+    if (requestGeneration !== generation) error.handled = true;
+    throw error;
+  }
+  let body;
+  try { body = await response.json(); }
+  catch (error) {
+    if (requestGeneration !== generation) error.handled = true;
+    if (response.ok) throw error;
+    body = {};
+  }
+  if (requestGeneration !== generation) throw Object.assign(new Error('Session changed.'), { handled: true });
   if (!response.ok) {
     const error = new Error(typeof body.error === 'string' ? body.error : `Request failed (${response.status}).`);
     error.status = response.status;
+    if (response.status === 401) {
+      disconnect();
+      announce('The admin token was not accepted. Copy the current token from your coordinator and reconnect.', true);
+      error.handled = true;
+    }
     throw error;
   }
   return body;
+}
+
+function reportError(error) {
+  if (!error.handled) announce(readableError(error), true);
+}
+
+function newSubmissionKey() {
+  return [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function readableError(error) {
@@ -61,6 +92,8 @@ function readableError(error) {
 
 function setSession(value) {
   generation += 1;
+  sessionController.abort();
+  sessionController = new AbortController();
   token = value;
   try {
     if (value) sessionStorage.setItem('pocketfleet-token', value);
@@ -76,6 +109,7 @@ function disconnect() {
   setSession('');
   fleet = { workers: [], jobs: [] };
   selectedJob = null;
+  submissionIntent = null;
   $('token').value = '';
   $('pairing').hidden = true;
   $('pair-command').textContent = '';
@@ -84,6 +118,8 @@ function disconnect() {
   $('workers').replaceChildren();
   $('jobs').replaceChildren();
   connection('Not connected');
+  connectionInterrupted = false;
+  $('token').focus();
 }
 
 async function refresh() {
@@ -100,10 +136,7 @@ async function refresh() {
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
   } catch (error) {
     if (requestGeneration !== generation) return;
-    if (error.status === 401) {
-      disconnect();
-      announce('The admin token was not accepted. Copy the current token from your coordinator and reconnect.', true);
-    } else {
+    if (!error.handled) {
       connection('Connection interrupted');
       connectionInterrupted = true;
       announce(readableError(error), true);
@@ -216,6 +249,7 @@ async function inspectJob(id) {
   if (!summary) return;
   const requestGeneration = generation;
   const requestSequence = ++detailSequence;
+  inspectedJobId = id;
   selectedJob = null;
   $('result-title').textContent = labels[summary.kind] || summary.kind;
   $('result-meta').replaceChildren();
@@ -243,9 +277,10 @@ async function inspectJob(id) {
   }
   $('result-error').hidden = !selectedJob.error;
   $('result-error').textContent = selectedJob.error || '';
-  const output = selectedJob.result == null ? 'No result yet. Close and inspect again after the job finishes.' : JSON.stringify(selectedJob.result, null, 2);
-  $('result-output').textContent = output.length > 30000 ? `${output.slice(0, 30000)}\n\nPreview truncated. Download the full result below.` : output;
-  $('download-result').hidden = selectedJob.result == null;
+  const hasResult = Object.hasOwn(selectedJob, 'result');
+  const output = hasResult ? JSON.stringify(selectedJob.result, null, 2) : (['failed', 'cancelled'].includes(selectedJob.status) ? 'This job ended without a result.' : 'No result yet. Close and inspect again after the job finishes.');
+  $('result-output').textContent = output.length > PREVIEW_CHARACTERS ? `${output.slice(0, PREVIEW_CHARACTERS)}\n\nPreview truncated. Download the full result below.` : output;
+  $('download-result').hidden = !hasResult;
 }
 
 function saveFile(blob, filename) {
@@ -271,6 +306,7 @@ $('login-form').addEventListener('submit', async (event) => {
 });
 $('logout').addEventListener('click', () => { disconnect(); announce('Disconnected. The token has been removed from this tab.'); });
 $('kind').addEventListener('change', () => {
+  submissionIntent = null;
   const isModel = $('kind').value === 'ollama';
   $('model-field').hidden = !isModel;
   $('model').required = isModel;
@@ -278,7 +314,17 @@ $('kind').addEventListener('change', () => {
   $('kind-help').textContent = descriptions[$('kind').value];
   capabilityHint();
 });
-$('payload').addEventListener('input', () => { $('char-count').textContent = `${$('payload').value.length.toLocaleString()} characters`; });
+function validateText() {
+  const bytes = new TextEncoder().encode($('payload').value).length;
+  const invalid = bytes > MAX_TEXT_BYTES;
+  $('payload').setCustomValidity(invalid ? 'Text exceeds 128 KiB in UTF-8. Shorten it before sending.' : '');
+  $('payload').setAttribute('aria-invalid', String(invalid));
+  $('char-count').textContent = `${bytes.toLocaleString()} / ${MAX_TEXT_BYTES.toLocaleString()} UTF-8 bytes`;
+  $('char-count').classList.toggle('danger', invalid);
+  return !invalid;
+}
+$('payload').addEventListener('input', () => { submissionIntent = null; validateText(); });
+$('model').addEventListener('input', () => { submissionIntent = null; });
 $('example').addEventListener('click', () => {
   $('payload').value = $('kind').value === 'ollama' ? 'Explain distributed job queues in three short sentences.' : 'A small fleet can do useful work.\nPocketFleet sends this text to an available worker.\nYour computers, working together.';
   $('payload').dispatchEvent(new Event('input'));
@@ -286,16 +332,22 @@ $('example').addEventListener('click', () => {
 });
 $('job-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (submitting || !validateText()) return;
+  submitting = true;
   const kind = $('kind').value;
   const payload = kind === 'ollama' ? { model: $('model').value.trim(), prompt: $('payload').value } : { text: $('payload').value };
+  const body = JSON.stringify({ kind, payload });
+  if (submissionIntent?.body !== body) submissionIntent = { body, key: newSubmissionKey() };
+  const intent = submissionIntent;
   $('submit-job').disabled = true;
   try {
-    await api('/api/jobs', { method: 'POST', body: JSON.stringify({ kind, payload }) });
+    await api('/api/jobs', { method: 'POST', body, headers: { 'Idempotency-Key': intent.key } });
+    if (submissionIntent === intent) submissionIntent = null;
     announce(`${labels[kind]} queued. A matching worker will pick it up.`);
     clearTimeout(pollTimer);
     await refresh();
-  } catch (error) { announce(readableError(error), true); }
-  finally { $('submit-job').disabled = false; }
+  } catch (error) { reportError(error); }
+  finally { submitting = false; $('submit-job').disabled = false; }
 });
 $('pair').addEventListener('click', async () => {
   $('pair').disabled = true;
@@ -306,7 +358,7 @@ $('pair').addEventListener('click', async () => {
     $('pair-expiry').textContent = `Expires ${formatDate(result.expiresAt)}. Keep this code private.`;
     $('copy-pair').textContent = 'Copy command';
     $('pairing').scrollIntoView({ block: 'nearest', behavior: 'auto' });
-  } catch (error) { announce(readableError(error), true); }
+  } catch (error) { reportError(error); }
   finally { $('pair').disabled = false; }
 });
 $('close-pair').addEventListener('click', () => { $('pairing').hidden = true; $('pair-command').textContent = ''; });
@@ -325,7 +377,7 @@ $('workers').addEventListener('click', async (event) => {
     announce('Worker access revoked.');
     clearTimeout(pollTimer);
     await refresh();
-  } catch (error) { announce(readableError(error), true); button.disabled = false; }
+  } catch (error) { reportError(error); button.disabled = false; }
 });
 $('jobs').addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
@@ -338,7 +390,7 @@ $('jobs').addEventListener('click', async (event) => {
     announce('Job cancelled. Late results will be discarded; a running worker will receive cancellation on its next heartbeat.');
     clearTimeout(pollTimer);
     await refresh();
-  } catch (error) { announce(readableError(error), true); button.disabled = false; }
+  } catch (error) { reportError(error); button.disabled = false; }
 });
 $('job-filter').addEventListener('change', renderJobs);
 $('clear-history').addEventListener('click', async () => {
@@ -349,18 +401,30 @@ $('clear-history').addEventListener('click', async () => {
     announce('Finished jobs cleared. Active jobs remain in the queue.');
     clearTimeout(pollTimer);
     await refresh();
-  } catch (error) { announce(readableError(error), true); $('clear-history').disabled = false; }
+  } catch (error) { reportError(error); $('clear-history').disabled = false; }
 });
 $('close-result').addEventListener('click', () => $('result-dialog').close());
+$('result-dialog').addEventListener('close', () => {
+  detailSequence += 1;
+  selectedJob = null;
+  if (token) {
+    const trigger = [...$('jobs').querySelectorAll('[data-action="inspect"]')].find((button) => button.dataset.id === inspectedJobId);
+    (trigger || $('job-filter')).focus({ preventScroll: true });
+  }
+  inspectedJobId = null;
+});
 $('download-result').addEventListener('click', () => {
-  if (!selectedJob || selectedJob.result == null) return;
+  if (!selectedJob || !Object.hasOwn(selectedJob, 'result')) return;
   try {
     const result = selectedJob.result;
-    if (selectedJob.kind === 'gzip' && result.encoding === 'base64' && typeof result.data === 'string') {
+    if (selectedJob.kind === 'gzip' && result?.encoding === 'base64' && typeof result.data === 'string') {
       const bytes = Uint8Array.from(atob(result.data), (character) => character.charCodeAt(0));
       saveFile(new Blob([bytes], { type: 'application/gzip' }), 'pocketfleet-output.txt.gz');
     } else saveFile(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }), `pocketfleet-${selectedJob.kind}.json`);
-  } catch { announce('This result could not be downloaded. Inspect its content and try again.', true); }
+  } catch {
+    $('result-error').hidden = false;
+    $('result-error').textContent = 'This result could not be downloaded. Its artifact data is invalid.';
+  }
 });
 
 if (token) { setSession(token); connection('Connecting…'); refresh(); }
