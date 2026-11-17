@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { hostname } from 'node:os';
-import { initialize, readConfig, atomicJson, requireValue, validateServer } from './config.mjs';
+import { initialize, readConfig, atomicJson, requireValue, validateServer, workerNameFromHostname } from './config.mjs';
 import { createCoordinator } from './server.mjs';
 import { enrollWorker, runWorker, api } from './worker.mjs';
 import { inspectDirectory, restoreBackup, writeBackup } from './maintenance.mjs';
@@ -33,7 +33,7 @@ For API clients use POCKETFLEET_TOKEN; never put admin credentials in a URL.
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     dir: { type: 'string', default: '.pocketfleet' }, host: { type: 'string', default: '127.0.0.1' }, port: { type: 'string', default: '4320' },
-    server: { type: 'string', default: 'http://127.0.0.1:4320' }, code: { type: 'string' }, name: { type: 'string', default: hostname() },
+    server: { type: 'string', default: 'http://127.0.0.1:4320' }, code: { type: 'string' }, name: { type: 'string', default: workerNameFromHostname(hostname()) },
     cert: { type: 'string' }, key: { type: 'string' }, ollama: { type: 'string' }, kind: { type: 'string' }, text: { type: 'string' }, file: { type: 'string' }, model: { type: 'string' }, 'idempotency-key': { type: 'string' },
     replace: { type: 'boolean' },
     init: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, 'allow-insecure-lan': { type: 'boolean' },

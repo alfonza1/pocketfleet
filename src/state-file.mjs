@@ -20,7 +20,7 @@ export function validateFleetState(data) {
   valid(Buffer.byteLength(JSON.stringify(data)) <= LIMITS.stateBytes);
   unique(data.workers, 'id'); unique(data.jobs, 'id'); unique(data.pairings, 'hash');
   for (const worker of data.workers) {
-    valid(isId(worker.id) && typeof worker.name === 'string' && worker.name.trim().length > 0 && worker.name.length <= 64);
+    valid(isId(worker.id) && typeof worker.name === 'string' && worker.name.trim().length > 0 && worker.name.length <= LIMITS.workerNameChars);
     valid(isSecret(worker.tokenHash) && isDate(worker.lastSeen) && typeof worker.revoked === 'boolean');
     valid(Array.isArray(worker.capabilities) && worker.capabilities.length > 0 && worker.capabilities.length <= KINDS.length && worker.capabilities.every((kind) => KINDS.includes(kind)));
   }

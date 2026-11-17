@@ -9,10 +9,12 @@ export const LIMITS = Object.freeze({
   jobTimeoutMs: 120_000, offlineMs: 15_000, pollMs: 1_000,
   retryMaxMs: 30_000, completionAttempts: 3, identityRequestsPerMinute: 600,
   anonymousRequestsPerMinute: 120, maxRateEntries: 4096,
+  workerNameChars: 64,
 });
 export const KINDS = ['sha256', 'gzip', 'text-stats', 'ollama'];
 export const secret = () => randomBytes(32).toString('hex');
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
+export const workerNameFromHostname = (value) => value.trim().slice(0, LIMITS.workerNameChars) || 'worker';
 export function matches(value, digest) {
   return typeof value === 'string' && typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest)
     && timingSafeEqual(Buffer.from(hash(value), 'hex'), Buffer.from(digest, 'hex'));

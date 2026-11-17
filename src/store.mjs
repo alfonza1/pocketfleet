@@ -100,7 +100,7 @@ export class FleetStore {
   }
   enroll({ code, name, capabilities }) {
     this.assertHealthy();
-    requireValue(typeof name === 'string' && name.trim().length > 0 && name.length <= 64, 'Worker name must be 1–64 characters.');
+    requireValue(typeof name === 'string' && name.trim().length > 0 && name.length <= LIMITS.workerNameChars, 'Worker name must be 1–64 characters.');
     requireValue(Array.isArray(capabilities) && capabilities.length > 0 && capabilities.length <= KINDS.length && capabilities.every((kind) => KINDS.includes(kind)), 'Unsupported capabilities.');
     const index = this.data.pairings.findIndex((item) => item.expiresAt > this.now() && matches(code, item.hash));
     requireValue(index !== -1, 'Pairing code is invalid, expired, or already used.', 401);

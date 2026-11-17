@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { FleetStore } from '../src/store.mjs';
 import { createCoordinator } from '../src/server.mjs';
-import { initialize, hash, LIMITS, atomicJson, matches } from '../src/config.mjs';
+import { initialize, hash, LIMITS, atomicJson, matches, workerNameFromHostname } from '../src/config.mjs';
 import { api, enrollWorker, reportCompletion, runWorker } from '../src/worker.mjs';
 import { inspectDirectory, restoreBackup, writeBackup } from '../src/maintenance.mjs';
 import { readFleetState } from '../src/state-file.mjs';
@@ -242,7 +242,10 @@ test('a real CLI worker cancels a slow model request and continues processing jo
   });
   const waitUntil = async (check) => {
     const deadline = Date.now() + 10000;
-    while (!(await check())) { assert.ok(Date.now() < deadline, `Timed out waiting for CLI worker: ${stderr}`); await delay(50); }
+    while (!(await check())) {
+      assert.equal(child.exitCode, null, `CLI worker exited: ${stderr}`);
+      assert.ok(Date.now() < deadline, `Timed out waiting for CLI worker: ${stderr}`); await delay(50);
+    }
   };
   const job = await api(server, '/api/jobs', { token: adminToken, body: { kind: 'ollama', payload: { model: 'fixture', prompt: 'slow' } } });
   await waitUntil(() => modelStarted);
@@ -258,4 +261,13 @@ test('invalid TLS configuration releases the state lock for a corrected restart'
   assert.throws(() => createCoordinator({ directory, adminToken, tls: { cert: 'invalid certificate', key: 'invalid key' } }));
   assert.equal(existsSync(join(directory, 'coordinator.lock')), false);
   const recovered = new FleetStore(directory, adminToken); recovered.close();
+});
+
+test('default worker names enroll on long macOS/cloud hostnames', (t) => {
+  const { store } = fixture(t);
+  const name = workerNameFromHostname('macos-runner-' + 'x'.repeat(100) + '.internal.example');
+  assert.equal(name.length, LIMITS.workerNameChars);
+  const worker = store.enroll({ code: store.pairing().code, name, capabilities: ['sha256'] });
+  assert.ok(store.worker(worker.token));
+  assert.equal(workerNameFromHostname('   '), 'worker');
 });
