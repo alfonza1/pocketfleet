@@ -25,11 +25,7 @@ export class FleetStore {
   }
   acquireLock() {
     if (existsSync(this.lockPath)) {
-      const pid = Number(readFileSync(this.lockPath, 'utf8'));
-      let alive = true;
-      try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') alive = false; }
-      if (alive) throw new Error('A coordinator already owns this state directory.');
-      unlinkSync(this.lockPath);
+      throw new Error('A coordinator already owns this state directory. If it crashed, confirm its PID in coordinator.lock has stopped, then remove that lock before restarting.');
     }
     const fd = openSync(this.lockPath, 'wx', 0o600);
     writeFileSync(fd, String(process.pid)); closeSync(fd); this.locked = true;
@@ -37,16 +33,32 @@ export class FleetStore {
   close() { if (this.locked) { unlinkSync(this.lockPath); this.locked = false; } }
   timestamp() { return new Date(this.now()).toISOString(); }
   assertHealthy() { requireValue(!this.persistenceFailed, 'Persistence failed. Free disk space or fix permissions, then restart the coordinator. Dispatch is stopped.', 503); }
+  rollback() {
+    if (!this.lastDurable) return;
+    const restored = JSON.parse(this.lastDurable);
+    // Heartbeats are intentionally ephemeral. A rejected write must not rewind them.
+    for (const job of restored.jobs) {
+      const current = this.data.jobs.find((item) => item.id === job.id);
+      if (job.status === 'running' && current?.workerId === job.workerId && current.deadline === job.deadline) {
+        job.leaseUntil = Math.max(job.leaseUntil, current.leaseUntil);
+      }
+    }
+    for (const worker of restored.workers) {
+      const current = this.data.workers.find((item) => item.id === worker.id);
+      if (current) worker.lastSeen = current.lastSeen;
+    }
+    this.data = restored;
+  }
   save() {
     this.assertHealthy();
     const serialized = JSON.stringify(this.data);
     if (Buffer.byteLength(serialized) > LIMITS.stateBytes) {
-      if (this.lastDurable) this.data = JSON.parse(this.lastDurable);
+      this.rollback();
       requireValue(false, 'Fleet state exceeds 16 MiB. Clear terminal jobs before continuing.', 409);
     }
     try { this.persist(this.path, this.data); this.lastDurable = serialized; }
     catch (error) {
-      if (this.lastDurable) this.data = JSON.parse(this.lastDurable);
+      this.rollback();
       this.persistenceFailed = true;
       throw Object.assign(new Error('Could not persist state. Dispatch is stopped until the coordinator is restarted.'), { status: 503, cause: error });
     }

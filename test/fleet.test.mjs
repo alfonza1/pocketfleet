@@ -172,3 +172,17 @@ test('total state cap rejects excess output without losing last durable job stat
   assert.throws(() => store.save(), /16 MiB/);
   assert.equal(store.data.junk, undefined); assert.equal(store.persistenceFailed, false);
 });
+
+test('rejected oversized writes preserve renewed running leases', (t) => {
+  let now = 100000;
+  const { store } = fixture(t, { now: () => now }); const w = worker(store);
+  store.submit({ kind: 'text-stats', payload: { text: 'still working' } });
+  const { job } = store.claim(w.record);
+  now += 15000; store.heartbeat(w.record, job);
+  store.data.junk = 'x'.repeat(LIMITS.stateBytes);
+  assert.throws(() => store.save(), /16 MiB/);
+  now += 10000;
+  assert.equal(store.detail(job.id).status, 'running');
+  store.complete(store.worker(w.token), { ...job, result: { words: 2 } });
+  assert.equal(store.detail(job.id).status, 'completed');
+});
