@@ -1,0 +1,21 @@
+{
+  "name": "@alfonza1/pocketfleet",
+  "version": "0.1.0",
+  "description": "A private job fleet for the computers you already own.",
+  "type": "module",
+  "bin": { "pocketfleet": "src/cli.mjs" },
+  "files": ["src", "public", "README.md", "LICENSE"],
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "node src/cli.mjs serve --init",
+    "start": "node src/cli.mjs serve",
+    "test": "node --test test/*.test.mjs",
+    "lint": "node scripts/check.mjs",
+    "typecheck": "node scripts/check.mjs",
+    "build": "node scripts/check.mjs",
+    "test:e2e": "node scripts/browser-check.mjs"
+  },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/alfonza1/pocketfleet.git" },
+  "keywords": ["agents", "local-ai", "distributed", "homelab", "job-queue"]
+}

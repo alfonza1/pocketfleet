@@ -1,0 +1,11 @@
+node_modules/
+.pocketfleet/
+.worker-*/
+*.tgz
+*.pem
+*.key
+.env*
+!\.env.example
+test-results/
+playwright-report/
+coverage/
