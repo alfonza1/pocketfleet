@@ -1,24 +1,40 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, openSync, closeSync, fsyncSync, unlinkSync, linkSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
 
 export const LIMITS = Object.freeze({
   textBytes: 128 * 1024, bodyBytes: 1024 * 1024, resultBytes: 512 * 1024,
   maxJobs: 500, maxWorkers: 32, maxPairings: 16, stateBytes: 16 * 1024 * 1024,
   pairingMs: 5 * 60_000, heartbeatMs: 3_000, leaseMs: 20_000,
   jobTimeoutMs: 120_000, offlineMs: 15_000, pollMs: 1_000,
+  retryMaxMs: 30_000, completionAttempts: 3, identityRequestsPerMinute: 600,
+  anonymousRequestsPerMinute: 120, maxRateEntries: 4096,
 });
 export const KINDS = ['sha256', 'gzip', 'text-stats', 'ollama'];
 export const secret = () => randomBytes(32).toString('hex');
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
 export function matches(value, digest) {
-  return typeof value === 'string' && typeof digest === 'string' && digest.length === 64
+  return typeof value === 'string' && typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest)
     && timingSafeEqual(Buffer.from(hash(value), 'hex'), Buffer.from(digest, 'hex'));
 }
-export function atomicJson(path, value) {
-  const temporary = `${path}.tmp`;
-  writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 });
-  renameSync(temporary, path);
+export function atomicJson(path, value, { exclusive = false } = {}) {
+  const temporary = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+  let descriptor;
+  try {
+    descriptor = openSync(temporary, 'wx', 0o600);
+    writeFileSync(descriptor, JSON.stringify(value));
+    fsyncSync(descriptor);
+    closeSync(descriptor); descriptor = undefined;
+    if (exclusive) linkSync(temporary, path);
+    else renameSync(temporary, path);
+    // Windows does not expose a portable directory fsync through Node.
+    if (process.platform !== 'win32') {
+      descriptor = openSync(dirname(path), 'r'); fsyncSync(descriptor);
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
 }
 export function initialize(directory) {
   const dir = resolve(directory);
@@ -31,7 +47,7 @@ export function initialize(directory) {
 }
 export function readConfig(directory) {
   const config = JSON.parse(readFileSync(join(directory, 'config.json'), 'utf8'));
-  if (config.version !== 1 || !/^[a-f0-9]{64}$/.test(config.adminToken)) throw new Error('Invalid configuration. Restore your config.json backup.');
+  if (!config || config.version !== 1 || !/^[a-f0-9]{64}$/.test(config.adminToken)) throw new Error('Invalid configuration. Restore your config.json backup.');
   return config;
 }
 export function requireValue(condition, message, status = 400) {
@@ -49,7 +65,7 @@ export function validateJob(kind, payload) {
     requireValue(typeof payload.model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/.test(payload.model), 'Provide a valid installed Ollama model name.');
     requireValue(text.trim().length > 0, 'Prompt cannot be empty.');
   }
-  return structuredClone(payload);
+  return kind === 'ollama' ? { model: payload.model, prompt: text } : { text };
 }
 export function validateServer(input, allowInsecure = false) {
   const url = new URL(input);

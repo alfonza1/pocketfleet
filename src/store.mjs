@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LIMITS, KINDS, secret, hash, matches, atomicJson, requireValue, validateJob } from './config.mjs';
+import { readFleetState } from './state-file.mjs';
 
 export class FleetStore {
   constructor(directory, adminToken, { now = Date.now, lock = true, persist = atomicJson } = {}) {
@@ -15,7 +16,7 @@ export class FleetStore {
     this.locked = false;
     if (lock) this.acquireLock();
     try {
-      this.data = existsSync(this.path) ? JSON.parse(readFileSync(this.path, 'utf8'))
+      this.data = existsSync(this.path) ? readFleetState(this.path)
         : { version: 1, workers: [], jobs: [], pairings: [] };
       requireValue(this.data.version === 1 && ['workers', 'jobs', 'pairings'].every((key) => Array.isArray(this.data[key])), 'Unsupported or corrupt state file. Restore a backup.', 500);
       // A restart cannot know whether an in-flight operation completed. Never silently retry it.
@@ -83,7 +84,7 @@ export class FleetStore {
         ...worker, online: this.now() - Date.parse(worker.lastSeen) < LIMITS.offlineMs,
         busy: this.data.jobs.some((job) => job.workerId === worker.id && job.status === 'running'),
       })),
-      jobs: this.data.jobs.map(({ leaseToken, leaseUntil, deadline, payload, result, ...job }) => job),
+      jobs: this.data.jobs.map(({ leaseToken, leaseUntil, deadline, payload, result, completionReceipt, idempotencyKey, ...job }) => job),
       limits: { maxJobs: LIMITS.maxJobs, textBytes: LIMITS.textBytes, jobTimeoutMs: LIMITS.jobTimeoutMs },
     };
   }
@@ -116,12 +117,21 @@ export class FleetStore {
     for (const job of this.data.jobs.filter((item) => item.workerId === id && item.status === 'running')) this.fail(job, 'Worker revoked; execution outcome is unknown.');
     this.save(); return { revoked: true };
   }
-  submit({ kind, payload }) {
+  submit({ kind, payload }, idempotencyKey) {
     this.assertHealthy();
     const clean = validateJob(kind, payload);
+    if (idempotencyKey !== undefined) {
+      requireValue(typeof idempotencyKey === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey), 'Idempotency-Key must be 1–128 letters, digits, dots, underscores, colons or hyphens.');
+      const previous = this.data.jobs.find((job) => job.idempotencyKey === idempotencyKey);
+      if (previous) {
+        requireValue(previous.kind === kind && JSON.stringify(previous.payload) === JSON.stringify(clean), 'Idempotency-Key already belongs to a different job.', 409);
+        return this.detail(previous.id);
+      }
+    }
     requireValue(this.data.jobs.length < LIMITS.maxJobs, 'Job history is full. Delete completed jobs before submitting more.', 409);
     const job = { id: randomUUID(), kind, payload: clean, status: 'queued', createdAt: this.timestamp(), updatedAt: this.timestamp(), workerId: null };
-    this.data.jobs.push(job); this.save(); return structuredClone(job);
+    if (idempotencyKey !== undefined) job.idempotencyKey = idempotencyKey;
+    this.data.jobs.push(job); this.save(); return this.detail(job.id);
   }
   cancel(id) {
     this.assertHealthy();
@@ -156,12 +166,20 @@ export class FleetStore {
     return { active: true };
   }
   complete(worker, { id, leaseToken, result, error }) {
+    this.assertHealthy();
+    const existing = this.data.jobs.find((item) => item.id === id);
+    const payloadHash = hash(JSON.stringify({ result, error }));
+    if (existing?.completionReceipt && existing.workerId === worker.id && matches(leaseToken, existing.completionReceipt.tokenHash)) {
+      requireValue(existing.completionReceipt.payloadHash === payloadHash, 'Job lease already completed with a different result.', 409);
+      return { id: existing.id, status: existing.status };
+    }
     const job = this.lease(worker, id, leaseToken);
     requireValue(typeof error === 'undefined' || (typeof error === 'string' && error.trim().length > 0 && error.length <= 1000), 'Error must be a nonempty short string.');
     requireValue((typeof result !== 'undefined') !== (typeof error === 'string'), 'Completion needs exactly one result or error.');
     requireValue(Buffer.byteLength(JSON.stringify(result ?? null)) <= LIMITS.resultBytes, 'Result exceeds 512 KiB.');
     job.status = error ? 'failed' : 'completed';
     if (error) job.error = error; else job.result = result;
+    job.completionReceipt = { tokenHash: hash(leaseToken), payloadHash };
     job.updatedAt = this.timestamp(); worker.lastSeen = this.timestamp(); delete job.leaseToken; this.save();
     return { id: job.id, status: job.status };
   }
@@ -169,7 +187,7 @@ export class FleetStore {
     this.expire();
     const found = this.data.jobs.find((job) => job.id === id);
     requireValue(found, 'Job not found.', 404);
-    const { leaseToken, leaseUntil, deadline, ...job } = found;
+    const { leaseToken, leaseUntil, deadline, completionReceipt, idempotencyKey, ...job } = found;
     return structuredClone(job);
   }
 }

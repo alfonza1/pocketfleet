@@ -6,8 +6,9 @@ import { hostname } from 'node:os';
 import { initialize, readConfig, atomicJson, requireValue, validateServer } from './config.mjs';
 import { createCoordinator } from './server.mjs';
 import { enrollWorker, runWorker, api } from './worker.mjs';
+import { inspectDirectory, restoreBackup, writeBackup } from './maintenance.mjs';
 
-const HELP = `PocketFleet 0.1.0 — a private fleet for the computers you already own
+const HELP = `PocketFleet 0.2.0 — a private fleet for the computers you already own
 
   pocketfleet init                         Create local credentials (.pocketfleet)
   pocketfleet serve [--init]               Start coordinator and dashboard :4320
@@ -18,10 +19,14 @@ const HELP = `PocketFleet 0.1.0 — a private fleet for the computers you alread
   pocketfleet submit --kind gzip --file input.txt
   pocketfleet status                      Show real workers and jobs as JSON
   pocketfleet pair                        Create a one-use worker pairing code
+  pocketfleet doctor                      Inspect local configuration, queue and lock safely
+  pocketfleet backup --file BACKUP.json    Save a consistent backup from a running coordinator
+  pocketfleet restore --file BACKUP.json   Restore offline (existing state requires --replace)
 
 Options: --dir PATH (state directory), --host IP, --port NUMBER,
   --cert PATH --key PATH (HTTPS), --allow-insecure-lan (trusted private LAN only),
-  --ollama http://127.0.0.1:11434 (worker opt-in), --model NAME (submit).
+  --ollama http://127.0.0.1:11434 (worker opt-in), --model NAME (submit),
+  --idempotency-key KEY (submit retry protection while job remains in history).
 Requires Node.js 22.12+. No shell execution, cloud service or model downloads.
 For API clients use POCKETFLEET_TOKEN; never put admin credentials in a URL.
 `;
@@ -29,7 +34,8 @@ async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     dir: { type: 'string', default: '.pocketfleet' }, host: { type: 'string', default: '127.0.0.1' }, port: { type: 'string', default: '4320' },
     server: { type: 'string', default: 'http://127.0.0.1:4320' }, code: { type: 'string' }, name: { type: 'string', default: hostname() },
-    cert: { type: 'string' }, key: { type: 'string' }, ollama: { type: 'string' }, kind: { type: 'string' }, text: { type: 'string' }, file: { type: 'string' }, model: { type: 'string' },
+    cert: { type: 'string' }, key: { type: 'string' }, ollama: { type: 'string' }, kind: { type: 'string' }, text: { type: 'string' }, file: { type: 'string' }, model: { type: 'string' }, 'idempotency-key': { type: 'string' },
+    replace: { type: 'boolean' },
     init: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, 'allow-insecure-lan': { type: 'boolean' },
   } });
   const command = positionals[0];
@@ -37,6 +43,15 @@ async function main() {
   const directory = resolve(values.dir);
   if (command === 'init') { initialize(directory); console.log(`Initialized ${directory}. Run pocketfleet token to copy your admin token, then pocketfleet serve.`); return; }
   if (command === 'token') { console.log(readConfig(directory).adminToken); return; }
+  if (command === 'doctor') {
+    const report = inspectDirectory(directory); console.log(JSON.stringify(report, null, 2));
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
+  if (command === 'restore') {
+    requireValue(values.file, 'Provide --file BACKUP.json.');
+    console.log(JSON.stringify(restoreBackup(directory, resolve(values.file), { replace: values.replace }), null, 2)); return;
+  }
   if (command === 'serve') {
     const config = values.init ? initialize(directory) : readConfig(directory);
     const port = Number(values.port); requireValue(Number.isInteger(port) && port >= 1 && port <= 65535, 'Port must be 1–65535.');
@@ -69,13 +84,19 @@ async function main() {
     await runWorker({ server, token: credentials.token, ollama: values.ollama, signal: controller.signal, onError: (error) => console.error(`Worker reconnecting: ${error.message}`) }); return;
   }
   const token = process.env.POCKETFLEET_TOKEN || readConfig(directory).adminToken;
-  if (command === 'status') console.log(JSON.stringify(await api(server, '/api/state', { token, method: 'GET' }), null, 2));
+  if (command === 'backup') {
+    requireValue(values.file, 'Provide --file BACKUP.json (a new file).');
+    const backup = await api(server, '/api/backup', { token, method: 'GET' });
+    writeBackup(resolve(values.file), backup);
+    console.log('Backup saved. It contains private job data. Keep config.json separately; restore requires the same coordinator credentials.');
+  }
+  else if (command === 'status') console.log(JSON.stringify(await api(server, '/api/state', { token, method: 'GET' }), null, 2));
   else if (command === 'pair') console.log(JSON.stringify(await api(server, '/api/pairing', { token }), null, 2));
   else if (command === 'submit') {
     requireValue(Boolean(values.file) !== (values.text !== undefined), 'Provide exactly one of --text or --file.');
     const text = values.file ? readFileSync(values.file, 'utf8') : values.text;
     const payload = values.kind === 'ollama' ? { prompt: text, model: values.model } : { text };
-    console.log(JSON.stringify(await api(server, '/api/jobs', { token, body: { kind: values.kind, payload } }), null, 2));
+    console.log(JSON.stringify(await api(server, '/api/jobs', { token, body: { kind: values.kind, payload }, idempotencyKey: values['idempotency-key'] }), null, 2));
   } else throw new Error(`Unknown command: ${command}. Run pocketfleet --help.`);
 }
 main().catch((error) => { console.error(`PocketFleet: ${error.code === 'ENOENT' ? 'File not found. Run pocketfleet init first, and check supplied paths.' : error.message}`); process.exitCode = 1; });
