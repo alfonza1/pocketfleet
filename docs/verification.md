@@ -17,6 +17,11 @@ required for this test (Git for Windows includes it).
 
 `npm run lint` and `npm run build` syntax-check native modules. This JavaScript project
 does not claim TypeScript checks. `npm pack --dry-run` reviews the distributable allowlist.
+The public release tarball was downloaded, SHA-256 matched against the local artifact,
+and installed into an empty prefix. The installed package served its dashboard and
+completed a real paired-worker job. Installation directly from the public asset URL
+also passed. A GitHub shorthand/tag install produced incomplete extraction on this
+Windows/npm environment, so the README uses the verified release asset instead.
 
 ## Browser
 

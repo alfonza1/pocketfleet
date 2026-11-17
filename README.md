@@ -54,7 +54,7 @@ An existing worker reconnects without `--code` using the same `--dir` and `--ser
 Optional command installation:
 
 ```powershell
-npm install --global github:alfonza1/pocketfleet#v0.1.0
+npm install --global https://github.com/alfonza1/pocketfleet/releases/download/v0.1.0/alfonza1-pocketfleet-0.1.0.tgz
 pocketfleet --help
 ```
 
