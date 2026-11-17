@@ -52,7 +52,7 @@ export function createCoordinator({ directory, adminToken, host = '127.0.0.1', t
         requireValue(rate || rates.size < LIMITS.maxRateEntries, 'Server is busy. Try again shortly.', 429);
         rates.set(address, { minute, count: 1 });
       } else requireValue(++rate.count <= rateLimit, 'Request limit reached. Try again in one minute.', 429);
-      if (request.method === 'GET' && url.pathname === '/health') return json(response, store.persistenceFailed ? 503 : 200, { ok: !store.persistenceFailed, version: '0.2.0' });
+      if (request.method === 'GET' && url.pathname === '/health') return json(response, store.persistenceFailed ? 503 : 200, { ok: !store.persistenceFailed, version: '0.3.0' });
       if (request.method === 'GET' && Object.hasOwn(ASSETS, url.pathname)) {
         const [name, contentType] = ASSETS[url.pathname];
         response.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': `${contentType}; charset=utf-8` });

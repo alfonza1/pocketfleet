@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-const directories = ['src', 'scripts', 'test', 'public'];
+const directories = ['src', 'scripts', 'test', 'public', 'site'];
 let count = 0;
 for (const directory of directories) {
   for (const name of readdirSync(directory)) {

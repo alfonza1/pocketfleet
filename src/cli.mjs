@@ -8,9 +8,10 @@ import { createCoordinator } from './server.mjs';
 import { enrollWorker, runWorker, api } from './worker.mjs';
 import { inspectDirectory, restoreBackup, writeBackup } from './maintenance.mjs';
 
-const HELP = `PocketFleet 0.2.0 — a private fleet for the computers you already own
+const HELP = `PocketFleet 0.3.0 — a private fleet for the computers you already own
 
   pocketfleet init                         Create local credentials (.pocketfleet)
+  pocketfleet demo [--once]                Run two local workers in a disposable fleet
   pocketfleet serve [--init]               Start coordinator and dashboard :4320
   pocketfleet token                       Display your local admin token
   pocketfleet worker --server URL --code CODE [--name NAME]
@@ -35,12 +36,17 @@ async function main() {
     dir: { type: 'string', default: '.pocketfleet' }, host: { type: 'string', default: '127.0.0.1' }, port: { type: 'string', default: '4320' },
     server: { type: 'string', default: 'http://127.0.0.1:4320' }, code: { type: 'string' }, name: { type: 'string', default: workerNameFromHostname(hostname()) },
     cert: { type: 'string' }, key: { type: 'string' }, ollama: { type: 'string' }, kind: { type: 'string' }, text: { type: 'string' }, file: { type: 'string' }, model: { type: 'string' }, 'idempotency-key': { type: 'string' },
-    replace: { type: 'boolean' },
+    replace: { type: 'boolean' }, once: { type: 'boolean' },
     init: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, 'allow-insecure-lan': { type: 'boolean' },
   } });
   const command = positionals[0];
   if (values.help || !command) { console.log(HELP); return; }
   const directory = resolve(values.dir);
+  if (command === 'demo') {
+    const { demo } = await import('./demo.mjs');
+    await demo({ once: values.once });
+    return;
+  }
   if (command === 'init') { initialize(directory); console.log(`Initialized ${directory}. Run pocketfleet token to copy your admin token, then pocketfleet serve.`); return; }
   if (command === 'token') { console.log(readConfig(directory).adminToken); return; }
   if (command === 'doctor') {

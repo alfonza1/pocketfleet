@@ -1,7 +1,16 @@
 # PocketFleet
 
-**Put the computers you already own to work.** Pair a worker, dispatch a job,
-and collect its result in a private, local dashboard.
+**Run a private job queue on computers you own.** Try two workers on one machine with Node.js 22.12+:
+
+```sh
+npx --yes --package=https://github.com/alfonza1/pocketfleet/releases/download/v0.3.0/alfonza1-pocketfleet-0.3.0.tgz pocketfleet demo
+```
+
+Open the loopback URL printed in your terminal and use the temporary token to sign in.
+One worker counts the words in a sample log. A second compresses it into a downloadable
+gzip file. Try another job, then press Ctrl+C to stop both workers and remove the demo
+state. Add `--once` for a terminal-only run that verifies both results and exits.
+From a source checkout the same command is `node src/cli.mjs demo`.
 
 [Website](https://alfonza1.github.io/pocketfleet/) · [Quick start](#quick-start) · [Architecture](docs/architecture.md) · [Security](SECURITY.md)
 
@@ -11,7 +20,7 @@ Agents can submit jobs through the CLI or HTTP API; people can use the dashboard
 
 ![PocketFleet dispatch dashboard](docs/screenshots/desktop.png)
 
-## What works in v0.2
+## What you can run
 
 - Pair up to 32 workers with expiring, single-use codes and revocable credentials.
 - Dispatch UTF-8 text analysis, SHA-256 hashing, and gzip compression.
@@ -54,7 +63,7 @@ An existing worker reconnects without `--code` using the same `--dir` and `--ser
 Optional command installation:
 
 ```powershell
-npm install --global https://github.com/alfonza1/pocketfleet/releases/download/v0.2.0/alfonza1-pocketfleet-0.2.0.tgz
+npm install --global https://github.com/alfonza1/pocketfleet/releases/download/v0.3.0/alfonza1-pocketfleet-0.3.0.tgz
 pocketfleet --help
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "@alfonza1/pocketfleet",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A private job fleet for the computers you already own.",
   "type": "module",
   "bin": {

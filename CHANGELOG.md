@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Added `pocketfleet demo` to launch an isolated loopback fleet with two real worker processes, completed sample jobs, and a downloadable gzip artifact. `demo --once` verifies output and exits.
+- Reworked dashboard sign-in and empty states. A suggested gzip job can be edited before submission.
+- Added a copyable demo command and a real dashboard screenshot to the project website.
+
 ## 0.2.0
 
 - Durable file flushes, strict state validation, and private online backups with safe offline restore.
